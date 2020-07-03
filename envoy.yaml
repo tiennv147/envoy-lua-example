@@ -1,0 +1,315 @@
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address:
+      protocol: TCP
+      address: 127.0.0.1
+      port_value: 9901
+static_resources:
+  listeners:
+  - name: api
+    address:
+      socket_address:
+        protocol: TCP
+        address: 0.0.0.0
+        port_value: 10000
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.config.filter.network.http_connection_manager.v2.HttpConnectionManager
+          codec_type: auto
+          stat_prefix: ingress_http
+          access_log:
+            - name: envoy.file_access_log
+              typed_config:
+                "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+                path: "/var/log/access.log"
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: www
+              domains:
+              - "*"
+              cors:
+                allow_origin:
+                - "*"
+                allow_methods: "GET, PUT, DELETE, POST, PATCH, OPTIONS"
+                allow_headers: "authorization, keep-alive, user-agent, cache-control, content-type, content-transfer-encoding, x-accept-content-transfer-encoding, x-accept-response-streaming, x-user-agent, x-grpc-web, referer"
+                filter_enabled:
+                  default_value:
+                    numerator: 100
+                    denominator: HUNDRED
+                  runtime_key: cors.www.enabled
+                shadow_enabled:
+                  default_value:
+                    numerator: 0
+                    denominator: HUNDRED
+                  runtime_key: cors.www.shadow_enabled
+              routes:
+              - match:
+                  prefix: "/echo"
+                route:
+                  cluster: service_echo
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "public"
+              - match:
+                  prefix: "/id/auth/v1/login"
+                route:
+                  prefix_rewrite: "/login"
+                  cluster: phypass_id
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "public"
+              - match:
+                  prefix: "/id/auth/v1/consent"
+                route:
+                  prefix_rewrite: "/consent"
+                  cluster: phypass_id
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "public"
+              - match:
+                  prefix: "/id/auth/v1/"
+                route:
+                  prefix_rewrite: "/"
+                  cluster: phypass_id
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/id/keto/v1/"
+                route:
+                  prefix_rewrite: "/"
+                  cluster: keto
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/id/hydra/v1/"
+                route:
+                  prefix_rewrite: "/"
+                  cluster: hydra_public
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "public"
+              - match:
+                  prefix: "/id/hydra-admin/v1/"
+                route:
+                  prefix_rewrite: "/"
+                  cluster: hydra_internal
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/households/v1"
+                route:
+                  prefix_rewrite: "/households"
+                  cluster: service_tvsion_household
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/cameras/v1"
+                route:
+                  prefix_rewrite: "/cameras"
+                  cluster: service_tvsion_household
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/members/v1"
+                route:
+                  prefix_rewrite: "/members"
+                  cluster: service_tvsion_household
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/devices/v1"
+                route:
+                  prefix_rewrite: "/devices"
+                  cluster: service_tvsion_household
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/channels/v1"
+                route:
+                  prefix_rewrite: "/channels"
+                  cluster: service_tvsion_channel
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/tvprograms/v1"
+                route:
+                  prefix_rewrite: "/tvprograms"
+                  cluster: service_tvsion_channel
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/analytics/v1/bundle"
+                route:
+                  prefix_rewrite: "/analytics/bundle"
+                  cluster: service_tvsion_analytics
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+              - match:
+                  prefix: "/tvsion/analytics/v1"
+                route:
+                  prefix_rewrite: "/analytics"
+                  cluster: service_tvsion_analytics
+                metadata:
+                  filter_metadata:
+                    envoy.lua:
+                      security: "oauth2"
+          http_filters:
+          - name: envoy.cors
+            typed_config: {}
+          - name: envoy.lua
+            typed_config:
+              "@type": type.googleapis.com/envoy.config.filter.http.lua.v2.Lua
+              inline_code: |
+                local phypassid = require("lib.phypassid")
+
+                function envoy_on_request(request_handle)
+                  phypassid.introspect(request_handle)
+                end
+
+                function envoy_on_response(response_handle)
+                  body_size = response_handle:body():length()
+                  response_handle:headers():add("response-body-size", tostring(body_size))
+                end
+          - name: envoy.router
+            typed_config: {}
+  clusters:
+  - name: service_echo
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: service_echo
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: echo
+                port_value: 8887
+  - name: phypass_id
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: phypass_id
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: phypassid
+                port_value: 8082
+  - name: keto
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: keto
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: keto
+                port_value: 4466
+  - name: hydra_public
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: hydra_public
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: hydra
+                port_value: 4444
+  - name: hydra_internal
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: hydra_internal
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: hydra
+                port_value: 4445
+  - name: service_tvsion_household
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: service_tvsion_household
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: ec2-54-254-222-183.ap-southeast-1.compute.amazonaws.com
+                port_value: 8081
+  - name: service_tvsion_channel
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: service_tvsion_channel
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: ec2-52-77-228-0.ap-southeast-1.compute.amazonaws.com
+                port_value: 8083
+  - name: service_tvsion_analytics
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: service_tvsion_analytics
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: ec2-52-77-223-148.ap-southeast-1.compute.amazonaws.com
+                    port_value: 8085
